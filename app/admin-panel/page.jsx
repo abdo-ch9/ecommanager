@@ -161,7 +161,7 @@ export default function AdminPanel() {
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6 mb-8">
             {statsCards.map((stat) => (
               <Card key={stat.title}>
-                <CardContent className="p-6">
+          <CardContent className="pt-6 px-6 pb-6">
                   <div className="flex items-center justify-between">
                     <div>
                       <p className="text-sm font-medium text-gray-600">{stat.title}</p>
@@ -185,7 +185,7 @@ export default function AdminPanel() {
                   <div className="flex items-center gap-4">
                     <div className="relative">
                       <Search className="w-4 h-4 absolute left-3 top-1/2 transform -translate-y-1/2 text-gray-400" />
-                      <Input placeholder="Search users..." className="pl-10 w-64" />
+                    <Input placeholder="Search users..." className="pl-10 w-64 bg-white" />
                     </div>
                     <Button className="bg-blue-600 hover:bg-blue-700">
                       <Plus className="w-4 h-4 mr-2" />
@@ -194,7 +194,7 @@ export default function AdminPanel() {
                   </div>
                 </div>
               </CardHeader>
-              <CardContent>
+              <CardContent className="pt-6 px-6 pb-6">
                 <div className="overflow-x-auto">
                   <table className="w-full">
                     <thead>
@@ -257,7 +257,7 @@ export default function AdminPanel() {
               <CardTitle>AI Testing Panel</CardTitle>
               <CardDescription>Test AI responses and monitor performance</CardDescription>
             </CardHeader>
-            <CardContent>
+            <CardContent className="pt-6 px-6 pb-6">
               <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
                 <div>
                   <label className="block text-sm font-medium text-gray-700 mb-2">Input Prompt</label>
@@ -265,7 +265,7 @@ export default function AdminPanel() {
                     placeholder="Enter your test prompt here..."
                     value={testPrompt}
                     onChange={(e) => setTestPrompt(e.target.value)}
-                    className="min-h-32"
+                    className="min-h-32 bg-white"
                   />
                 </div>
                 <div>
@@ -295,7 +295,7 @@ export default function AdminPanel() {
                 <CardTitle>Feature Flags</CardTitle>
                 <CardDescription>Enable/disable beta features</CardDescription>
               </CardHeader>
-              <CardContent className="space-y-6">
+              <CardContent className="pt-6 space-y-6 px-6 pb-6">
                 {featureFlags.map((flag, index) => (
                   <div
                     key={index}
@@ -317,7 +317,7 @@ export default function AdminPanel() {
                 <CardTitle>Email Delivery Logs</CardTitle>
                 <CardDescription>Recent email activity and status</CardDescription>
               </CardHeader>
-              <CardContent>
+              <CardContent className="pt-6 px-6 pb-6">
                 <div className="space-y-4">
                   {emailLogs.map((log, index) => (
                     <div key={index} className="flex items-center gap-3 p-3 rounded-lg bg-gray-50">

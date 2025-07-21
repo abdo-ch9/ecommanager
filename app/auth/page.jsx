@@ -352,17 +352,35 @@ export default function AuthPage() {
                         </div>
                     ) : (
                         <div className="space-y-3">
-                            <Button variant="outline" className="w-full h-12 border-gray-200 hover:bg-gray-50 bg-transparent text-gray-900" onClick={async () => {
-                                try {
-                                    const { data, error } = await supabase.auth.signInWithOAuth({
-                                        provider: 'google',
-                                    })
-                                    if (error) throw error
-                                } catch (error) {
-                                    console.error('Google sign-in error:', error)
-                                    setError('Failed to sign in with Google')
-                                }
-                            }}>
+                            {/* Google Sign In Button */}
+                            <Button 
+                                variant="outline" 
+                                className="w-full h-12 border-gray-200 hover:bg-gray-50 bg-transparent text-gray-900" 
+                                onClick={async () => {
+                                    try {
+                                        console.log('Starting Google sign-in...');
+                                        const { data, error } = await supabase.auth.signInWithOAuth({
+                                            provider: 'google',
+                                            options: {
+                                                redirectTo: `${window.location.origin}/integration`,
+                                                scopes: 'email profile https://www.googleapis.com/auth/gmail.readonly https://www.googleapis.com/auth/gmail.send https://www.googleapis.com/auth/gmail.modify https://www.googleapis.com/auth/gmail.labels',
+                                                queryParams: {
+                                                    access_type: 'offline',
+                                                    prompt: 'consent'
+                                                }
+                                            }
+                                        });
+                                        
+                                        if (error) {
+                                            console.error('Google sign-in error:', error);
+                                            throw error;
+                                        }
+                                    } catch (error) {
+                                        console.error('Google sign-in error:', error);
+                                        setError('Failed to sign in with Google: ' + error.message);
+                                    }
+                                }}
+                            >
                                 <svg className="w-5 h-5 mr-3" viewBox="0 0 24 24">
                                     <path
                                         fill="#4285F4"
