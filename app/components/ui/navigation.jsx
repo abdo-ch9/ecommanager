@@ -4,7 +4,7 @@ import { useEffect, useState } from 'react'
 import Link from 'next/link'
 import { useRouter } from 'next/navigation'
 import { Button } from './button'
-import { supabase } from '@/utils/supabaseClient'
+import { supabase } from '@/utils/supabase'
 import { User, Settings, Sun, Moon, CreditCard, LogOut } from 'lucide-react'
 
 export function Navigation() {

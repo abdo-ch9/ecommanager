@@ -11,6 +11,7 @@ import { Header } from "@/components/header"
 import { Footer } from "@/components/footer"
 import { supabase } from "@/utils/supabase"
 import { GmailInbox } from "@/components/gmail-inbox"
+import { GmailStats } from "@/components/gmail-stats"
 
 export default function IntegrationsPage() {
   const [wooApiKey, setWooApiKey] = useState("")
@@ -21,12 +22,18 @@ export default function IntegrationsPage() {
   const [imapPassword, setImapPassword] = useState("")
   const [isConnecting, setIsConnecting] = useState(false)
   const [error, setError] = useState("")
+  const [mounted, setMounted] = useState(false)
   const [integrations, setIntegrations] = useState({
     woocommerce: { status: 'not_connected' },
     gmail: { status: 'not_connected' },
     outlook: { status: 'not_connected' },
     imap: { status: 'not_connected' }
   })
+
+  // Fix hydration mismatch
+  useEffect(() => {
+    setMounted(true)
+  }, [])
 
   // Update the handleGmailConnect function
   const handleGmailConnect = async () => {
@@ -90,71 +97,69 @@ export default function IntegrationsPage() {
         return;
       }
 
-      console.log('Found session, checking Gmail integration...');
+      console.log('Found session, checking Gmail integration...', {
+        provider: session.user.app_metadata?.provider,
+        hasProviderToken: !!session.provider_token,
+        hasRefreshToken: !!session.refresh_token
+      });
       
-      // First, clean up any duplicate integrations
-      if (session.user.app_metadata?.provider === 'google') {
-        // Get all Gmail integrations for this user
-        const { data: existingIntegrations, error: fetchError } = await supabase
-          .from('integrations')
-          .select('*')
-          .eq('user_id', session.user.id)
-          .eq('platform', 'gmail');
-
-        if (fetchError) {
-          console.error('Error fetching existing integrations:', fetchError);
-          throw fetchError;
-        }
-
-        // If there are multiple integrations, keep only the most recent one
-        if (existingIntegrations && existingIntegrations.length > 1) {
-          console.log('Found multiple Gmail integrations, cleaning up...');
-          
-          // Sort by connected_at in descending order
-          const sortedIntegrations = existingIntegrations.sort((a, b) => 
-            new Date(b.connected_at) - new Date(a.connected_at)
-          );
-
-          // Delete all but the most recent one
-          const oldIntegrationIds = sortedIntegrations
-            .slice(1)
-            .map(integration => integration.id);
-
-          const { error: deleteError } = await supabase
-            .from('integrations')
-            .delete()
-            .in('id', oldIntegrationIds);
-
-          if (deleteError) {
-            console.error('Error deleting duplicate integrations:', deleteError);
-            throw deleteError;
-          }
-        }
-
-        // Store or update the Gmail integration
+      // Only store integration if we have OAuth tokens and it's a Google provider
+      if (session.user.app_metadata?.provider === 'google' && session.provider_token) {
+        console.log('Google OAuth session detected with tokens');
+        
+        // Store or update the Gmail integration with proper tokens
         const integrationData = {
           user_id: session.user.id,
           platform: 'gmail',
           credentials: {
             email: session.user.email,
-            provider: session.user.app_metadata.provider,
-            avatar_url: session.user.user_metadata.avatar_url,
-            full_name: session.user.user_metadata.full_name
+            provider: 'google',
+            access_token: session.provider_token,
+            refresh_token: session.refresh_token,
+            expires_at: new Date(Date.now() + 3600 * 1000).toISOString(),
+            avatar_url: session.user.user_metadata?.avatar_url,
+            full_name: session.user.user_metadata?.full_name,
+            scopes: [
+              'https://www.googleapis.com/auth/gmail.readonly',
+              'https://www.googleapis.com/auth/gmail.send',
+              'https://www.googleapis.com/auth/gmail.modify',
+              'https://www.googleapis.com/auth/gmail.labels'
+            ]
           },
           status: 'connected',
           connected_at: new Date().toISOString()
         };
 
-        console.log('Storing Gmail integration...', integrationData);
+        console.log('Storing Gmail integration with tokens...', {
+          user_id: integrationData.user_id,
+          email: integrationData.credentials.email,
+          hasAccessToken: !!integrationData.credentials.access_token,
+          hasRefreshToken: !!integrationData.credentials.refresh_token
+        });
 
-        const { error: upsertError } = await supabase
+        // First, delete any existing Gmail integrations for this user
+        const { error: deleteError } = await supabase
           .from('integrations')
-          .upsert(integrationData);
+          .delete()
+          .eq('user_id', session.user.id)
+          .eq('platform', 'gmail');
 
-        if (upsertError) {
-          console.error('Error storing integration:', upsertError);
-          throw upsertError;
+        if (deleteError) {
+          console.error('Error deleting existing integration:', deleteError);
         }
+
+        // Then insert the new integration
+        const { data: result, error: insertError } = await supabase
+          .from('integrations')
+          .insert(integrationData)
+          .select();
+
+        if (insertError) {
+          console.error('Error storing integration:', insertError);
+          throw insertError;
+        }
+
+        console.log('Integration stored successfully:', result);
       }
 
       // Fetch the current integration
@@ -171,11 +176,14 @@ export default function IntegrationsPage() {
         throw fetchError;
       }
 
-      console.log('Found integrations:', integrations);
+      console.log('Found integrations:', integrations?.length || 0);
 
       if (integrations && integrations.length > 0) {
         const integration = integrations[0];
-        console.log('Updating integrations state...');
+        console.log('Updating integrations state...', {
+          hasAccessToken: !!integration.credentials?.access_token,
+          email: integration.credentials?.email
+        });
         setIntegrations(prev => ({
           ...prev,
           gmail: {
@@ -184,6 +192,8 @@ export default function IntegrationsPage() {
           }
         }));
         console.log('Gmail status updated successfully');
+      } else {
+        console.log('No Gmail integration found in database');
       }
     } catch (error) {
       console.error('Error in checkAndUpdateGmailStatus:', error);
@@ -332,6 +342,8 @@ export default function IntegrationsPage() {
 
   // Update the auth state change handler
   useEffect(() => {
+    if (!mounted) return;
+
     const handleAuthChange = async (event, session) => {
       console.log('Auth state changed:', event, 'Session data:', {
         email: session?.user?.email,
@@ -404,9 +416,11 @@ export default function IntegrationsPage() {
       }
     };
 
-    // Initial load
-    console.log('Initial mount, fetching integrations...');
-    refreshIntegrationStatus();
+    // Initial load - check for existing integrations and OAuth session
+    console.log('Initial mount, checking for existing integrations and OAuth session...');
+    checkAndUpdateGmailStatus().then(() => {
+      refreshIntegrationStatus();
+    });
 
     // Listen for auth changes
     const { data: { subscription } } = supabase.auth.onAuthStateChange(handleAuthChange);
@@ -415,7 +429,7 @@ export default function IntegrationsPage() {
       console.log('Cleaning up auth state listener');
       subscription?.unsubscribe();
     };
-  }, []);
+  }, [mounted]);
 
   const handleWooCommerceConnect = async () => {
     try {
@@ -480,7 +494,7 @@ export default function IntegrationsPage() {
 
   // Update the renderGmailSection function
   const renderGmailSection = () => {
-    console.log('Rendering Gmail section with status:', integrations.gmail);
+    console.log('Rendering Gmail section with status:', integrations.gmail?.status || 'not_connected');
     return (
       <Card className="mb-6">
         <CardContent className="pt-6 p-6 bg-white rounded-lg">
@@ -541,7 +555,7 @@ export default function IntegrationsPage() {
                 
                 {/* Add Gmail Inbox */}
                 <div className="mt-6 border-t pt-6">
-                  <GmailInbox />
+                  <GmailStats />
                 </div>
               </div>
             </div>

@@ -37,7 +37,7 @@ export function GmailInbox() {
         throw new Error('Gmail integration not found. Please connect your Gmail account.');
       }
 
-      // Fetch emails
+      // Fetch emails from the correct endpoint "/api/gmail/inbox"
       const response = await fetch('/api/gmail/inbox', {
         headers: {
           'Authorization': `Bearer ${session.access_token}`
@@ -150,4 +150,4 @@ export function GmailInbox() {
       )}
     </div>
   );
-} 
+}
