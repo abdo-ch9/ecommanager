@@ -1,12 +1,13 @@
 "use client"
 
 import { useState, useEffect } from "react"
+import { useSearchParams } from 'next/navigation'
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent } from "@/components/ui/card"
 import { Input } from "@/components/ui/input"
 import { Badge } from "@/components/ui/badge"
-import { Puzzle, Bell, ShoppingBag, Package, Users, Link, RefreshCw, X, Mail, MessageSquare } from "lucide-react"
+import { Puzzle, Bell, ShoppingBag, Package, Users, Link, RefreshCw, X, Mail, MessageSquare, CheckCircle, XCircle, AlertCircle, DollarSign, ExternalLink, Settings } from "lucide-react"
 import { Header } from "@/components/header"
 import { Footer } from "@/components/footer"
 import { supabase } from "@/utils/supabase"
@@ -14,8 +15,12 @@ import { GmailInbox } from "@/components/gmail-inbox"
 import { GmailStats } from "@/components/gmail-stats"
 
 export default function IntegrationsPage() {
+  const searchParams = useSearchParams()
   const [wooApiKey, setWooApiKey] = useState("")
   const [wooStoreUrl, setWooStoreUrl] = useState("")
+  const [shopifyApiKey, setShopifyApiKey] = useState("")
+  const [shopifyPassword, setShopifyPassword] = useState("")
+  const [shopifyDomain, setShopifyDomain] = useState("")
   const [imapHost, setImapHost] = useState("")
   const [imapPort, setImapPort] = useState("")
   const [imapUsername, setImapUsername] = useState("")
@@ -23,8 +28,11 @@ export default function IntegrationsPage() {
   const [isConnecting, setIsConnecting] = useState(false)
   const [error, setError] = useState("")
   const [mounted, setMounted] = useState(false)
+  const [shopifyData, setShopifyData] = useState(null)
+  const [statusMessage, setStatusMessage] = useState(null)
   const [integrations, setIntegrations] = useState({
     woocommerce: { status: 'not_connected' },
+    shopify: { status: 'not_connected' },
     gmail: { status: 'not_connected' },
     outlook: { status: 'not_connected' },
     imap: { status: 'not_connected' }
@@ -34,6 +42,175 @@ export default function IntegrationsPage() {
   useEffect(() => {
     setMounted(true)
   }, [])
+
+  // Handle URL parameters for success/error messages
+  useEffect(() => {
+    if (!mounted) return
+
+    const success = searchParams.get('success')
+    const error = searchParams.get('error')
+
+    if (success) {
+      switch (success) {
+        case 'shopify_connected':
+          setStatusMessage({
+            type: 'success',
+            title: 'Shopify Connected!',
+            description: 'Your Shopify store has been successfully connected. You can now manage orders and customer inquiries.'
+          })
+          break
+        default:
+          setStatusMessage({
+            type: 'success',
+            title: 'Integration Successful!',
+            description: 'Your integration has been set up successfully.'
+          })
+      }
+    } else if (error) {
+      switch (error) {
+        case 'missing_parameters':
+          setStatusMessage({
+            type: 'error',
+            title: 'Connection Failed',
+            description: 'Missing required parameters. Please try connecting again.'
+          })
+          break
+        case 'invalid_credentials':
+          setStatusMessage({
+            type: 'error',
+            title: 'Invalid Credentials',
+            description: 'The API credentials provided are invalid. Please check your API key and password.'
+          })
+          break
+        case 'store_not_found':
+          setStatusMessage({
+            type: 'error',
+            title: 'Store Not Found',
+            description: 'The specified store domain could not be found. Please verify your store URL.'
+          })
+          break
+        default:
+          setStatusMessage({
+            type: 'error',
+            title: 'Integration Failed',
+            description: 'An unexpected error occurred. Please try again.'
+          })
+      }
+    }
+
+    // Clear URL parameters after showing message
+    if (success || error) {
+      const timer = setTimeout(() => {
+        window.history.replaceState({}, '', '/integration')
+      }, 100)
+      return () => clearTimeout(timer)
+    }
+  }, [searchParams, mounted])
+
+  // Fetch Shopify data if connected
+  useEffect(() => {
+    if (integrations?.shopify?.status === 'connected') {
+      fetchShopifyData()
+    }
+  }, [integrations])
+
+  const fetchShopifyData = async () => {
+    try {
+      const { data: { session } } = await supabase.auth.getSession()
+      if (!session) return
+
+      const response = await fetch(`/api/shopify/data?userId=${session.user.id}`)
+      if (response.ok) {
+        const data = await response.json()
+        setShopifyData(data)
+      }
+    } catch (error) {
+      console.error('Error fetching Shopify data:', error)
+    }
+  }
+
+  // Shopify connection handler using Private App credentials
+  const handleShopifyConnect = async () => {
+    try {
+      setIsConnecting(true)
+      setError("")
+      
+      if (!shopifyDomain || !shopifyApiKey || !shopifyPassword) {
+        setError("Please fill in all Shopify credentials")
+        return
+      }
+
+      // Get current session
+      const { data: { session } } = await supabase.auth.getSession()
+      if (!session) {
+        setError("Please login to connect Shopify")
+        return
+      }
+
+      // Validate domain format
+      let domain = shopifyDomain.trim()
+      if (!domain.endsWith('.myshopify.com')) {
+        domain = `${domain}.myshopify.com`
+      }
+
+      // Test Shopify connection
+      const response = await fetch('/api/shopify/test-connection', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          shopDomain: domain,
+          apiKey: shopifyApiKey,
+          password: shopifyPassword,
+          userId: session.user.id,
+        }),
+      })
+
+      const data = await response.json()
+      
+      if (!response.ok) {
+        throw new Error(data.error || 'Failed to connect to Shopify')
+      }
+
+      // Store credentials if connection successful
+      const { error: integrationError } = await supabase
+        .from('integrations')
+        .upsert({
+          user_id: session.user.id,
+          platform: 'shopify',
+          credentials: {
+            shop_domain: domain,
+            api_key: shopifyApiKey,
+            password: shopifyPassword, // In production, encrypt this
+            shop_info: data.shop_info
+          },
+          status: 'connected',
+          connected_at: new Date().toISOString()
+        })
+
+      if (integrationError) throw integrationError
+
+      // Clear form
+      setShopifyDomain("")
+      setShopifyApiKey("")
+      setShopifyPassword("")
+      
+      // Refresh integration status
+      await refreshIntegrationStatus()
+      setStatusMessage({
+        type: 'success',
+        title: 'Shopify Connected!',
+        description: 'Your Shopify store has been successfully connected.'
+      })
+
+    } catch (error) {
+      console.error('Shopify connection error:', error)
+      setError(error.message || "Failed to connect to Shopify")
+    } finally {
+      setIsConnecting(false)
+    }
+  }
 
   // Update the handleGmailConnect function
   const handleGmailConnect = async () => {
@@ -315,6 +492,7 @@ export default function IntegrationsPage() {
 
       const newIntegrationStatus = {
         woocommerce: { status: 'not_connected' },
+        shopify: { status: 'not_connected' },
         gmail: { status: 'not_connected' },
         outlook: { status: 'not_connected' },
         imap: { status: 'not_connected' }
@@ -329,6 +507,7 @@ export default function IntegrationsPage() {
       });
 
       console.log('Setting integration status:', {
+        shopify: newIntegrationStatus.shopify.status,
         gmail: newIntegrationStatus.gmail.status,
         hasGmailCredentials: !!newIntegrationStatus.gmail.credentials
       });
@@ -492,6 +671,241 @@ export default function IntegrationsPage() {
     { label: "Customers", value: "2,156", icon: Users, color: "text-orange-600" },
   ]
 
+  // Status message component
+  const StatusMessage = () => {
+    if (!statusMessage) return null
+
+    const Icon = statusMessage.type === 'success' ? CheckCircle : 
+                 statusMessage.type === 'error' ? XCircle : AlertCircle
+    
+    const bgColor = statusMessage.type === 'success' ? 'bg-green-50 border-green-200' :
+                    statusMessage.type === 'error' ? 'bg-red-50 border-red-200' :
+                    'bg-yellow-50 border-yellow-200'
+    
+    const iconColor = statusMessage.type === 'success' ? 'text-green-600' :
+                      statusMessage.type === 'error' ? 'text-red-600' :
+                      'text-yellow-600'
+    
+    const textColor = statusMessage.type === 'success' ? 'text-green-800' :
+                      statusMessage.type === 'error' ? 'text-red-800' :
+                      'text-yellow-800'
+
+    return (
+      <div className={`border rounded-lg p-4 mb-6 ${bgColor}`}>
+        <div className="flex items-start gap-3">
+          <Icon className={`w-5 h-5 mt-0.5 ${iconColor}`} />
+          <div>
+            <h3 className={`font-medium ${textColor}`}>{statusMessage.title}</h3>
+            <p className={`text-sm mt-1 ${textColor}`}>{statusMessage.description}</p>
+          </div>
+          <button
+            onClick={() => setStatusMessage(null)}
+            className={`ml-auto text-sm ${textColor} hover:opacity-75`}
+          >
+            ×
+          </button>
+        </div>
+      </div>
+    )
+  }
+
+  // Shopify Integration Component
+  const ShopifyIntegration = () => (
+    <Card className="mb-6">
+      <CardContent className="pt-6 p-6 bg-white rounded-lg">
+        <div className="flex items-center gap-3 mb-4">
+          <div className="w-10 h-10 bg-green-100 rounded-lg flex items-center justify-center">
+            <ShoppingBag className="w-6 h-6 text-green-600" />
+          </div>
+          <div className="flex-1">
+            <h4 className="font-semibold text-gray-900">Shopify</h4>
+            <div className="flex items-center gap-2 mt-1">
+              <div className={`w-2 h-2 ${integrations?.shopify?.status === 'connected' ? 'bg-green-500' : 'bg-gray-400'} rounded-full`}></div>
+              <span className={`text-sm ${integrations?.shopify?.status === 'connected' ? 'text-green-600' : 'text-gray-600'}`}>
+                {integrations?.shopify?.status === 'connected' ? 'Connected' : 'Not Connected'}
+              </span>
+            </div>
+          </div>
+        </div>
+
+        {integrations?.shopify?.status === 'connected' ? (
+          <div>
+            <div className="flex gap-2 mb-6">
+              <Button
+                variant="outline"
+                size="sm"
+                className="text-red-600 border-red-200 hover:bg-red-50 bg-transparent"
+                onClick={async () => {
+                  try {
+                    const { data: { session } } = await supabase.auth.getSession()
+                    if (!session) return
+
+                    const { error } = await supabase
+                      .from('integrations')
+                      .delete()
+                      .eq('user_id', session.user.id)
+                      .eq('platform', 'shopify')
+                    
+                    if (error) throw error
+                    await refreshIntegrationStatus()
+                  } catch (err) {
+                    console.error('Error disconnecting:', err)
+                    setError('Failed to disconnect Shopify')
+                  }
+                }}
+              >
+                <X className="w-4 h-4 mr-2" />
+                Disconnect
+              </Button>
+              <Button
+                variant="outline"
+                size="sm"
+                className="text-blue-600 border-blue-200 hover:bg-blue-50 bg-transparent"
+                onClick={fetchShopifyData}
+              >
+                <RefreshCw className="w-4 h-4 mr-2" />
+                Refresh Data
+              </Button>
+            </div>
+
+            <div>
+              <h5 className="font-medium text-gray-900 mb-3">Connected Store</h5>
+              <p className="text-sm text-gray-600 mb-6">
+                {integrations?.shopify?.credentials?.shop_domain || 'Unknown Store'}
+              </p>
+              
+              {shopifyData && (
+                <div>
+                  <h5 className="font-medium text-gray-900 mb-3">Store Statistics</h5>
+                  <div className="grid grid-cols-3 gap-4">
+                    <div className="text-center">
+                      <div className="flex justify-center mb-2">
+                        <ShoppingBag className="w-6 h-6 text-blue-600" />
+                      </div>
+                      <p className="text-sm text-gray-600">Orders</p>
+                      <p className="text-lg font-semibold text-gray-900">
+                        {shopifyData.stats?.orders?.total || 0}
+                      </p>
+                    </div>
+                    <div className="text-center">
+                      <div className="flex justify-center mb-2">
+                        <Package className="w-6 h-6 text-purple-600" />
+                      </div>
+                      <p className="text-sm text-gray-600">Products</p>
+                      <p className="text-lg font-semibold text-gray-900">
+                        {shopifyData.stats?.products?.total || 0}
+                      </p>
+                    </div>
+                    <div className="text-center">
+                      <div className="flex justify-center mb-2">
+                        <Users className="w-6 h-6 text-orange-600" />
+                      </div>
+                      <p className="text-sm text-gray-600">Customers</p>
+                      <p className="text-lg font-semibold text-gray-900">
+                        {shopifyData.stats?.customers?.total || 0}
+                      </p>
+                    </div>
+                  </div>
+
+                  {shopifyData.stats?.orders?.totalValue > 0 && (
+                    <div className="mt-4 p-3 bg-green-50 rounded-lg">
+                      <div className="flex items-center gap-2">
+                        <DollarSign className="w-4 h-4 text-green-600" />
+                        <span className="text-sm font-medium text-green-900">
+                          Total Revenue: ${shopifyData.stats.orders.totalValue.toFixed(2)}
+                        </span>
+                      </div>
+                    </div>
+                  )}
+                </div>
+              )}
+            </div>
+          </div>
+        ) : (
+          <div>
+            <div className="bg-blue-50 border border-blue-200 rounded-lg p-4 mb-4">
+              <div className="flex items-start gap-3">
+                <Settings className="w-5 h-5 text-blue-600 mt-0.5" />
+                <div>
+                  <h6 className="font-medium text-blue-800 mb-1">Private App Required</h6>
+                  <p className="text-sm text-blue-700 mb-2">
+                    To connect Shopify, you need to create a Private App in your Shopify admin panel.
+                  </p>
+                  <a 
+                    href="https://help.shopify.com/en/manual/apps/private-apps" 
+                    target="_blank" 
+                    rel="noopener noreferrer"
+                    className="inline-flex items-center text-sm text-blue-600 hover:text-blue-800"
+                  >
+                    Learn how to create a Private App
+                    <ExternalLink className="w-3 h-3 ml-1" />
+                  </a>
+                </div>
+              </div>
+            </div>
+
+            <div className="space-y-4 mb-4">
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-2">
+                  Store Domain
+                </label>
+                <Input
+                  className="bg-white placeholder-gray-700"
+                  placeholder="your-shop-name.myshopify.com"
+                  value={shopifyDomain}
+                  onChange={(e) => setShopifyDomain(e.target.value)}
+                />
+              </div>
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-2">
+                  API Key
+                </label>
+                <Input
+                  className="bg-white placeholder-gray-700"
+                  placeholder="Enter your Private App API Key"
+                  value={shopifyApiKey}
+                  onChange={(e) => setShopifyApiKey(e.target.value)}
+                />
+              </div>
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-2">
+                  Password
+                </label>
+                <Input
+                  type="password"
+                  className="bg-white placeholder-gray-700"
+                  placeholder="Enter your Private App Password"
+                  value={shopifyPassword}
+                  onChange={(e) => setShopifyPassword(e.target.value)}
+                />
+              </div>
+            </div>
+
+            <Button 
+              className="w-full bg-green-600 hover:bg-green-700 mb-4"
+              onClick={handleShopifyConnect}
+              disabled={isConnecting || !shopifyDomain || !shopifyApiKey || !shopifyPassword}
+            >
+              <ShoppingBag className="w-4 h-4 mr-2" />
+              {isConnecting ? "Connecting..." : "Connect Shopify Store"}
+            </Button>
+
+            <div className="bg-green-50 p-4 rounded-lg">
+              <h6 className="font-medium text-green-900 mb-2">What you'll get:</h6>
+              <ul className="text-sm text-green-700 space-y-1">
+                <li>• Automatic order notifications</li>
+                <li>• Customer inquiry management</li>
+                <li>• Product and inventory sync</li>
+                <li>• AI-powered customer support</li>
+                <li>• Real-time data integration</li>
+              </ul>
+            </div>
+          </div>
+        )}
+      </CardContent>
+    </Card>
+  )
+
   // Update the renderGmailSection function
   const renderGmailSection = () => {
     console.log('Rendering Gmail section with status:', integrations.gmail?.status || 'not_connected');
@@ -588,62 +1002,16 @@ export default function IntegrationsPage() {
           </p>
         </div>
 
+        {/* Status Messages */}
+        <StatusMessage />
+
         <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
           {/* E-commerce Platforms */}
           <div>
             <h3 className="text-lg font-semibold text-gray-900 mb-6">E-commerce Platforms</h3>
 
             {/* Shopify Integration */}
-            <Card className="mb-6">
-            <CardContent className="pt-6 p-6 bg-white rounded-lg">
-                <div className="flex items-center gap-3 mb-4">
-                    <div className="w-10 h-10 bg-green-100 rounded-lg flex items-center justify-center">
-                        <ShoppingBag className="w-6 h-6 text-green-600" />
-                    </div>
-                    <div className="flex-1">
-                        <h4 className="font-semibold text-gray-900">Shopify</h4>
-                        <div className="flex items-center gap-2 mt-1">
-                            <div className="w-2 h-2 bg-green-500 rounded-full"></div>
-                            <span className="text-sm text-green-600">Connected</span>
-                        </div>
-                    </div>
-                </div>
-
-                <div className="flex gap-2 mb-6">
-                  <Button
-                    variant="outline"
-                    size="sm"
-                    className="text-red-600 border-red-200 hover:bg-red-50 bg-transparent"
-                  >
-                    <X className="w-4 h-4 mr-2" />
-                    Disconnect
-                  </Button>
-                  <Button
-                    variant="outline"
-                    size="sm"
-                    className="text-blue-600 border-blue-200 hover:bg-blue-50 bg-transparent"
-                  >
-                    <RefreshCw className="w-4 h-4 mr-2" />
-                    Re-authenticate
-                  </Button>
-                </div>
-
-                <div>
-                  <h5 className="font-medium text-gray-900 mb-3">Synced Data</h5>
-                  <div className="grid grid-cols-3 gap-4">
-                    {syncedData.map((item) => (
-                      <div key={item.label} className="text-center">
-                        <div className="flex justify-center mb-2">
-                          <item.icon className={`w-6 h-6 ${item.color}`} />
-                        </div>
-                        <p className="text-sm text-gray-600">{item.label}</p>
-                        <p className="text-lg font-semibold text-gray-900">{item.value}</p>
-                      </div>
-                    ))}
-                  </div>
-                </div>
-              </CardContent>
-            </Card>
+            <ShopifyIntegration />
 
             {/* WooCommerce Integration */}
             <Card>

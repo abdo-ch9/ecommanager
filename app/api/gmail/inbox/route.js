@@ -14,11 +14,19 @@ export async function GET(request) {
 
     if (authHeader && authHeader.startsWith('Bearer ')) {
       const token = authHeader.split(' ')[1];
-      // Set the session using the token
-      await supabase.auth.setSession({
-        access_token: token,
-        refresh_token: token, // You might want to handle refresh tokens differently
-      });
+      try {
+        console.log('Setting supabase session with access token...');
+        // Attempt to get refresh token from somewhere if available
+        // For now, assume refresh_token is not available or same as access_token is incorrect
+        // So only set access_token if refresh_token is not available
+        await supabase.auth.setSession({
+          access_token: token,
+          // Do not set refresh_token here unless you have a valid one
+        });
+        console.log('Supabase session set successfully.');
+      } catch (setSessionError) {
+        console.error('Error setting supabase session:', setSessionError);
+      }
     }
     
     console.log('Checking session...');
