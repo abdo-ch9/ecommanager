@@ -227,8 +227,7 @@ export default function IntegrationsPage() {
         return;
       }
 
-      // First sign out to ensure clean OAuth flow
-      await supabase.auth.signOut();
+      // Removed signOut to keep user logged in during OAuth flow
 
       // Then sign in with Google OAuth
       console.log('Initiating Google OAuth...');

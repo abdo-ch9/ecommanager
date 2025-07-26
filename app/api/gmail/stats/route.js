@@ -87,37 +87,60 @@ export async function GET(request) {
     const gmail = google.gmail({ version: 'v1', auth: oauth2Client });
     const people = google.people({ version: 'v1', auth: oauth2Client });
 
-    // Get total emails count
-    const response = await gmail.users.messages.list({
-      userId: 'me',
-      q: 'in:inbox',
-      maxResults: 1,
-    });
-    const totalEmails = response.data.resultSizeEstimate || 0;
-
     // Get labels count
-    const labelsResponse = await gmail.users.labels.list({
-      userId: 'me',
-    });
-    const totalLabels = labelsResponse.data.labels ? labelsResponse.data.labels.length : 0;
+
+    let totalEmails = 0;
+    let nextPageToken = null;
+
+    do {
+      const response = await gmail.users.messages.list({
+        userId: 'me',
+        q: 'in:inbox category:primary is:unread',
+        pageToken: nextPageToken,
+        maxResults: 500, // maximum allowed by API
+      });
+
+      const messages = response.data.messages || [];
+      totalEmails += messages.length;
+      nextPageToken = response.data.nextPageToken;
+    } while (nextPageToken);
+
+    let totalImportantEmails = 0;
+    nextPageToken = null;
+    do {
+      const response = await gmail.users.messages.list({
+        userId: 'me',
+        q: 'is:important',
+        pageToken: nextPageToken,
+        maxResults: 500,
+      });
+      const messages = response.data.messages || [];
+      totalImportantEmails += messages.length;
+      nextPageToken = response.data.nextPageToken;
+    } while (nextPageToken);
+
+
 
     // Get contacts count (with error handling)
-    let totalContacts = 0;
-    try {
-      const contactsResponse = await people.people.connections.list({
-        resourceName: 'people/me',
-        pageSize: 1000,
-        personFields: 'names',
+    let totalSentEmails = 0;
+    nextPageToken = null;
+    do {
+      const response = await gmail.users.messages.list({
+        userId: 'me',
+        q: 'in:sent',
+        pageToken: nextPageToken,
+        maxResults: 500,
       });
-      totalContacts = contactsResponse.data.totalItems || 0;
-    } catch (contactsError) {
-      console.warn('Could not fetch contacts:', contactsError.message);
-    }
+      const messages = response.data.messages || [];
+      totalSentEmails += messages.length;
+      nextPageToken = response.data.nextPageToken;
+    } while (nextPageToken);
+
 
     return NextResponse.json({
       emails: totalEmails,
-      labels: totalLabels,
-      contacts: totalContacts,
+      importantEmails: totalImportantEmails,
+      sentEmails: totalSentEmails,
     });
   } catch (error) {
     return NextResponse.json(
