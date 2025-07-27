@@ -1,3 +1,4 @@
+// /app/api/gmail/inbox/route.js
 import { NextResponse } from 'next/server';
 import { google } from 'googleapis';
 import { cookies } from 'next/headers';
@@ -5,169 +6,109 @@ import { createRouteHandlerClient } from '@supabase/auth-helpers-nextjs';
 
 export async function GET(request) {
   try {
-    console.log('Initializing Supabase client...');
+    // Initialize Supabase client with request cookies
     const supabase = createRouteHandlerClient({ cookies });
-    
-    // Get the token from the Authorization header
+
+    // Fallback: accept access & refresh tokens via headers if no cookie session
     const authHeader = request.headers.get('Authorization');
-    console.log('Auth header present:', !!authHeader);
-
-    if (authHeader && authHeader.startsWith('Bearer ')) {
-      const token = authHeader.split(' ')[1];
-      try {
-        console.log('Setting supabase session with access token...');
-        // Attempt to get refresh token from somewhere if available
-        // For now, assume refresh_token is not available or same as access_token is incorrect
-        // So only set access_token if refresh_token is not available
-        await supabase.auth.setSession({
-          access_token: token,
-          // Do not set refresh_token here unless you have a valid one
-        });
-        console.log('Supabase session set successfully.');
-      } catch (setSessionError) {
-        console.error('Error setting supabase session:', setSessionError);
-      }
+    const refreshHeader = request.headers.get('x-refresh-token');
+    if (authHeader && authHeader.startsWith('Bearer ') && refreshHeader) {
+      const access_token = authHeader.split(' ')[1];
+      await supabase.auth.setSession({ access_token, refresh_token: refreshHeader });
     }
-    
-    console.log('Checking session...');
-    const {
-      data: { session },
-      error: sessionError,
-    } = await supabase.auth.getSession();
-    
-    if (sessionError) {
-      console.error('Session error:', sessionError);
-      throw sessionError;
-    }
-    
-    console.log('Session check result:', session ? 'Session found' : 'No session');
 
-    if (sessionError) throw sessionError;
-    if (!session) {
+    // Authenticate user
+    const { data: { user }, error: userError } = await supabase.auth.getUser();
+    if (userError || !user) {
       return NextResponse.json({ error: 'Not authenticated' }, { status: 401 });
     }
 
-    console.log('Session found for user:', session.user.email);
-
-    // Fetch Gmail integration for the user
+    // Fetch Gmail integration record
     const { data: integration, error: integrationError } = await supabase
       .from('integrations')
       .select('*')
-      .eq('user_id', session.user.id)
+      .eq('user_id', user.id)
       .eq('platform', 'gmail')
       .single();
-
     if (integrationError || !integration) {
-      return NextResponse.json(
-        { error: 'Gmail integration not found' },
-        { status: 404 }
-      );
+      return NextResponse.json({ error: 'Gmail integration not found' }, { status: 404 });
     }
 
-    if (!integration.credentials?.access_token) {
-      return NextResponse.json(
-        { error: 'Missing Gmail access token' },
-        { status: 400 }
-      );
+    // Ensure access token exists
+    const creds = integration.credentials;
+    if (!creds || !creds.access_token) {
+      return NextResponse.json({ error: 'Missing Gmail access token' }, { status: 400 });
     }
 
-    console.log('Gmail linked to:', integration.credentials.email);
-
-    // Initialize OAuth2 client
+    // Configure Google OAuth2 client
     const oauth2Client = new google.auth.OAuth2(
       process.env.NEXT_PUBLIC_GOOGLE_CLIENT_ID,
       process.env.GOOGLE_CLIENT_SECRET,
       `${process.env.NEXT_PUBLIC_APP_URL}/integration`
     );
-
     oauth2Client.setCredentials({
-      access_token: integration.credentials.access_token,
-      refresh_token: integration.credentials.refresh_token,
-      expiry_date: new Date(integration.credentials.expires_at).getTime(),
+      access_token: creds.access_token,
+      refresh_token: creds.refresh_token,
+      expiry_date: new Date(creds.expires_at).getTime(),
     });
 
-    // Handle token refresh
-    oauth2Client.on('tokens', async (tokens) => {
-      try {
-        const updatedCredentials = {
-          ...integration.credentials,
-          access_token: tokens.access_token,
-          refresh_token:
-            tokens.refresh_token || integration.credentials.refresh_token,
-          expires_at: new Date(
-            Date.now() + (tokens.expiry_date || 3600 * 1000)
-          ).toISOString(),
-        };
-
-        const { error: updateError } = await supabase
-          .from('integrations')
-          .update({
-            credentials: updatedCredentials,
-            updated_at: new Date().toISOString(),
-          })
-          .eq('id', integration.id);
-
-        if (updateError) {
-          console.error('Error updating tokens:', updateError);
-        } else {
-          console.log('Access token refreshed.');
-        }
-      } catch (err) {
-        console.error('Token refresh error:', err);
-      }
+    // Persist refreshed tokens
+    oauth2Client.on('tokens', async tokens => {
+      const updated = {
+        ...creds,
+        access_token: tokens.access_token,
+        refresh_token: tokens.refresh_token || creds.refresh_token,
+        expires_at: new Date(Date.now() + (tokens.expiry_date || 3600 * 1000)).toISOString(),
+      };
+      await supabase
+        .from('integrations')
+        .update({ credentials: updated, updated_at: new Date().toISOString() })
+        .eq('id', integration.id);
     });
 
     const gmail = google.gmail({ version: 'v1', auth: oauth2Client });
 
-    // Fetch inbox messages
-    const res = await gmail.users.messages.list({
-      userId: 'me',
-      q: 'in:inbox',
-      maxResults: 20,
-    });
+    // Build Gmail search query based on type
+    const { searchParams } = new URL(request.url);
+    const type = searchParams.get('type') || 'inbox';
+    let query = 'in:inbox';
+    if (type === 'unread') query = 'in:inbox category:primary is:unread';
+    else if (type === 'important') query = 'is:important';
+    else if (type === 'sent') query = 'in:sent';
 
-    if (!res.data.messages) {
-      return NextResponse.json([]);
-    }
+    // List messages
+    const listRes = await gmail.users.messages.list({ userId: 'me', q: query, maxResults: 20 });
+    const msgs = listRes.data.messages || [];
 
+    // Fetch metadata for each message
     const messages = await Promise.all(
-      res.data.messages.map(async (msg) => {
+      msgs.map(async msg => {
         try {
-          const details = await gmail.users.messages.get({
+          const detailRes = await gmail.users.messages.get({
             userId: 'me',
             id: msg.id,
             format: 'metadata',
             metadataHeaders: ['From', 'Subject', 'Date'],
           });
-
-          const headers = details.data.payload.headers;
+          const headers = detailRes.data.payload.headers;
           return {
             id: msg.id,
             threadId: msg.threadId,
-            subject:
-              headers.find((h) => h.name === 'Subject')?.value || '(no subject)',
-            from: headers.find((h) => h.name === 'From')?.value || '',
-            date: headers.find((h) => h.name === 'Date')?.value || '',
-            snippet: details.data.snippet || '',
+            subject: headers.find(h => h.name === 'Subject')?.value || '(no subject)',
+            from: headers.find(h => h.name === 'From')?.value || '',
+            date: headers.find(h => h.name === 'Date')?.value || '',
+            snippet: detailRes.data.snippet || '',
           };
-        } catch (error) {
-          console.error('Error fetching message:', error);
+        } catch (err) {
+          console.error('Error fetching message details', err);
           return null;
         }
       })
     );
 
-    const filtered = messages.filter(Boolean);
-    console.log(`Fetched ${filtered.length} messages.`);
-    return NextResponse.json(filtered);
+    return NextResponse.json(messages.filter(Boolean));
   } catch (error) {
     console.error('Fatal Gmail API error:', error);
-    return NextResponse.json(
-      {
-        error: error.message,
-        details: error.response?.data || error.stack || error,
-      },
-      { status: 500 }
-    );
+    return NextResponse.json({ error: error.message, details: error.stack }, { status: 500 });
   }
 }
