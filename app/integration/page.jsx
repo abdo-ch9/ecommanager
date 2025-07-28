@@ -11,7 +11,6 @@ import { Puzzle, Bell, ShoppingBag, Package, Users, Link, RefreshCw, X, Mail, Me
 import { Header } from "@/components/header"
 import { Footer } from "@/components/footer"
 import { supabase } from "@/utils/supabase"
-import { GmailInbox } from "@/components/gmail-inbox"
 import { GmailStats } from "@/components/gmail-stats"
 
 export default function IntegrationsPage() {
@@ -969,6 +968,8 @@ export default function IntegrationsPage() {
                 {/* Add Gmail Inbox */}
                 <div className="mt-6 border-t pt-6">
                   <GmailStats />
+                  <div className="mt-6 -mx-6 -mb-6 -mt-6">
+                  </div>
                 </div>
               </div>
             </div>

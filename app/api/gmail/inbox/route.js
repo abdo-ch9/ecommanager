@@ -6,6 +6,27 @@ import { createRouteHandlerClient } from '@supabase/auth-helpers-nextjs';
 
 export async function GET(request) {
   try {
+    // Check for required environment variables
+    const requiredEnvVars = {
+      NEXT_PUBLIC_GOOGLE_CLIENT_ID: process.env.NEXT_PUBLIC_GOOGLE_CLIENT_ID,
+      GOOGLE_CLIENT_SECRET: process.env.GOOGLE_CLIENT_SECRET,
+      NEXT_PUBLIC_APP_URL: process.env.NEXT_PUBLIC_APP_URL,
+      NEXT_PUBLIC_SUPABASE_URL: process.env.NEXT_PUBLIC_SUPABASE_URL,
+      NEXT_PUBLIC_SUPABASE_ANON_KEY: process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY,
+    };
+
+    const missingVars = Object.entries(requiredEnvVars)
+      .filter(([key, value]) => !value)
+      .map(([key]) => key);
+
+    if (missingVars.length > 0) {
+      console.error('Missing environment variables:', missingVars);
+      return NextResponse.json({ 
+        error: 'Server configuration error',
+        details: `Missing environment variables: ${missingVars.join(', ')}`
+      }, { status: 500 });
+    }
+
     // Initialize Supabase client with request cookies
     const supabase = createRouteHandlerClient({ cookies });
 
@@ -68,21 +89,73 @@ export async function GET(request) {
 
     const gmail = google.gmail({ version: 'v1', auth: oauth2Client });
 
-    // Build Gmail search query based on type
+    // Build Gmail search query based on type and get pagination parameters
     const { searchParams } = new URL(request.url);
     const type = searchParams.get('type') || 'inbox';
+    const page = parseInt(searchParams.get('page')) || 1;
+    const limit = parseInt(searchParams.get('limit')) || 50; // Default 50 emails per page
+    
     let query = 'in:inbox';
     if (type === 'unread') query = 'in:inbox category:primary is:unread';
     else if (type === 'important') query = 'is:important';
     else if (type === 'sent') query = 'in:sent';
-
-    // List messages
-    const listRes = await gmail.users.messages.list({ userId: 'me', q: query, maxResults: 20 });
-    const msgs = listRes.data.messages || [];
+    
+    // Smart pagination: fetch only what we need
+    let allMessages = [];
+    let pageToken = null;
+    let currentPage = 1;
+    let totalCount = 0;
+    
+    // First, get a sample to estimate total count
+    const sampleRes = await gmail.users.messages.list({ 
+      userId: 'me', 
+      q: query, 
+      maxResults: 100
+    });
+    
+    if (sampleRes.data.messages) {
+      allMessages.push(...sampleRes.data.messages);
+      pageToken = sampleRes.data.nextPageToken;
+    }
+    
+    // If we need more emails for the requested page, fetch them
+    const emailsNeeded = page * limit;
+    while (pageToken && allMessages.length < emailsNeeded && allMessages.length < 1000) {
+      const listRes = await gmail.users.messages.list({ 
+        userId: 'me', 
+        q: query, 
+        maxResults: 100,
+        pageToken: pageToken 
+      });
+      
+      if (listRes.data.messages) {
+        allMessages.push(...listRes.data.messages);
+      }
+      
+      pageToken = listRes.data.nextPageToken;
+      currentPage++;
+    }
+    
+    // Estimate total count based on what we've fetched
+    totalCount = allMessages.length >= emailsNeeded ? allMessages.length + 50 : allMessages.length;
+    
+    // Apply pagination to the results
+    const startIndex = (page - 1) * limit;
+    const endIndex = startIndex + limit;
+    const msgs = allMessages.slice(startIndex, endIndex);
 
     // Fetch metadata for each message
+    // Optimization: fetch message metadata in batch using messages.get with format 'metadata' for all messages in parallel
+    // But Gmail API does not support batch get in this way, so we will cache results in memory for this example to reduce calls
+
+    // Simple in-memory cache for message metadata during this request
+    const metadataCache = new Map();
+
     const messages = await Promise.all(
       msgs.map(async msg => {
+        if (metadataCache.has(msg.id)) {
+          return metadataCache.get(msg.id);
+        }
         try {
           const detailRes = await gmail.users.messages.get({
             userId: 'me',
@@ -91,7 +164,7 @@ export async function GET(request) {
             metadataHeaders: ['From', 'Subject', 'Date'],
           });
           const headers = detailRes.data.payload.headers;
-          return {
+          const messageData = {
             id: msg.id,
             threadId: msg.threadId,
             subject: headers.find(h => h.name === 'Subject')?.value || '(no subject)',
@@ -99,6 +172,8 @@ export async function GET(request) {
             date: headers.find(h => h.name === 'Date')?.value || '',
             snippet: detailRes.data.snippet || '',
           };
+          metadataCache.set(msg.id, messageData);
+          return messageData;
         } catch (err) {
           console.error('Error fetching message details', err);
           return null;
@@ -106,7 +181,13 @@ export async function GET(request) {
       })
     );
 
-    return NextResponse.json(messages.filter(Boolean));
+    return NextResponse.json({
+      messages: messages.filter(Boolean),
+      total: totalCount,
+      page,
+      limit,
+      hasMore: pageToken !== null
+    });
   } catch (error) {
     console.error('Fatal Gmail API error:', error);
     return NextResponse.json({ error: error.message, details: error.stack }, { status: 500 });
