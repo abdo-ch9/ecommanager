@@ -7,7 +7,7 @@ const nextConfig = {
     NEXT_PUBLIC_APP_URL: process.env.NEXT_PUBLIC_APP_URL,
   },
   experimental: {
-    serverActions: true
+    serverActions: {}
   }
 };
 

@@ -130,20 +130,36 @@ export default function IntegrationsPage() {
 
   // Shopify connection handler using Private App credentials
   const handleShopifyConnect = async () => {
+    setIsConnecting(true)
+    setError("")
     try {
-      setIsConnecting(true)
-      setError("")
-      
+      console.log('[Shopify] Connect button clicked');
+      console.log('[Shopify] Credentials:', { shopifyDomain, shopifyApiKey, shopifyPassword });
       if (!shopifyDomain || !shopifyApiKey || !shopifyPassword) {
         setError("Please fill in all Shopify credentials")
+        console.log('[Shopify] Missing credentials', { shopifyDomain, shopifyApiKey, shopifyPassword });
         return
+      } else {
+        console.log('[Shopify] All credentials present');
       }
 
       // Get current session
-      const { data: { session } } = await supabase.auth.getSession()
+      let session;
+      try {
+        const { data } = await supabase.auth.getSession();
+        session = data.session;
+        console.log('[Shopify] Session:', session);
+      } catch (err) {
+        setError('Error getting session: ' + err.message);
+        console.error('[Shopify] Error getting session:', err);
+        return;
+      }
       if (!session) {
         setError("Please login to connect Shopify")
+        console.log('[Shopify] No session');
         return
+      } else {
+        console.log('[Shopify] Session present');
       }
 
       // Validate domain format
@@ -151,25 +167,34 @@ export default function IntegrationsPage() {
       if (!domain.endsWith('.myshopify.com')) {
         domain = `${domain}.myshopify.com`
       }
+      console.log('[Shopify] Attempting connection with:', { domain, shopifyApiKey, shopifyPassword });
 
       // Test Shopify connection
-      const response = await fetch('/api/shopify/test-connection', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({
-          shopDomain: domain,
-          apiKey: shopifyApiKey,
-          password: shopifyPassword,
-          userId: session.user.id,
-        }),
-      })
-
-      const data = await response.json()
-      
+      let response, data
+      try {
+        response = await fetch('/api/shopify/test-connection', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify({
+            shopDomain: domain,
+            apiKey: shopifyApiKey,
+            password: shopifyPassword,
+            userId: session.user.id,
+          }),
+        })
+        data = await response.json()
+        console.log('[Shopify] API response:', response.status, data);
+      } catch (networkError) {
+        setError("Network error: " + networkError.message)
+        console.error('[Shopify] Network error:', networkError)
+        return
+      }
       if (!response.ok) {
-        throw new Error(data.error || 'Failed to connect to Shopify')
+        setError(data.error || 'Failed to connect to Shopify')
+        console.error('[Shopify] API error:', data)
+        return
       }
 
       // Store credentials if connection successful
@@ -188,7 +213,11 @@ export default function IntegrationsPage() {
           connected_at: new Date().toISOString()
         })
 
-      if (integrationError) throw integrationError
+      if (integrationError) {
+        setError("Database error: " + integrationError.message)
+        console.error('[Shopify] Supabase upsert error:', integrationError)
+        return
+      }
 
       // Clear form
       setShopifyDomain("")
@@ -202,12 +231,14 @@ export default function IntegrationsPage() {
         title: 'Shopify Connected!',
         description: 'Your Shopify store has been successfully connected.'
       })
+      console.log('[Shopify] Connection successful, status updated.');
 
     } catch (error) {
-      console.error('Shopify connection error:', error)
-      setError(error.message || "Failed to connect to Shopify")
+      setError("Unexpected error: " + (error.message || error))
+      console.error('[Shopify] Unexpected error:', error)
     } finally {
       setIsConnecting(false)
+      console.log('[Shopify] isConnecting set to false (finally)');
     }
   }
 

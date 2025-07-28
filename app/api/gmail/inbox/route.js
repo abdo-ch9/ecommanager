@@ -92,70 +92,28 @@ export async function GET(request) {
     // Build Gmail search query based on type and get pagination parameters
     const { searchParams } = new URL(request.url);
     const type = searchParams.get('type') || 'inbox';
-    const page = parseInt(searchParams.get('page')) || 1;
-    const limit = parseInt(searchParams.get('limit')) || 50; // Default 50 emails per page
-    
+    const limit = parseInt(searchParams.get('limit')) || 20; // Default 20 emails per page for better performance
+    const pageToken = searchParams.get('pageToken') || null;
+
     let query = 'in:inbox';
     if (type === 'unread') query = 'in:inbox category:primary is:unread';
     else if (type === 'important') query = 'is:important';
     else if (type === 'sent') query = 'in:sent';
-    
-    // Smart pagination: fetch only what we need
-    let allMessages = [];
-    let pageToken = null;
-    let currentPage = 1;
-    let totalCount = 0;
-    
-    // First, get a sample to estimate total count
-    const sampleRes = await gmail.users.messages.list({ 
-      userId: 'me', 
-      q: query, 
-      maxResults: 100
+
+    // Fetch a single page of messages using nextPageToken
+    const listRes = await gmail.users.messages.list({
+      userId: 'me',
+      q: query,
+      maxResults: limit,
+      pageToken: pageToken || undefined,
     });
-    
-    if (sampleRes.data.messages) {
-      allMessages.push(...sampleRes.data.messages);
-      pageToken = sampleRes.data.nextPageToken;
-    }
-    
-    // If we need more emails for the requested page, fetch them
-    const emailsNeeded = page * limit;
-    while (pageToken && allMessages.length < emailsNeeded && allMessages.length < 1000) {
-      const listRes = await gmail.users.messages.list({ 
-        userId: 'me', 
-        q: query, 
-        maxResults: 100,
-        pageToken: pageToken 
-      });
-      
-      if (listRes.data.messages) {
-        allMessages.push(...listRes.data.messages);
-      }
-      
-      pageToken = listRes.data.nextPageToken;
-      currentPage++;
-    }
-    
-    // Estimate total count based on what we've fetched
-    totalCount = allMessages.length >= emailsNeeded ? allMessages.length + 50 : allMessages.length;
-    
-    // Apply pagination to the results
-    const startIndex = (page - 1) * limit;
-    const endIndex = startIndex + limit;
-    const msgs = allMessages.slice(startIndex, endIndex);
 
-    // Fetch metadata for each message
-    // Optimization: fetch message metadata in batch using messages.get with format 'metadata' for all messages in parallel
-    // But Gmail API does not support batch get in this way, so we will cache results in memory for this example to reduce calls
+    const msgs = listRes.data.messages || [];
+    const nextPageToken = listRes.data.nextPageToken || null;
 
-    // Simple in-memory cache for message metadata during this request
-    const metadataCache = new Map();
-
+    // Fetch metadata for each message (parallel, but only for this page)
     const messages = await Promise.all(
       msgs.map(async msg => {
-        if (metadataCache.has(msg.id)) {
-          return metadataCache.get(msg.id);
-        }
         try {
           const detailRes = await gmail.users.messages.get({
             userId: 'me',
@@ -164,7 +122,7 @@ export async function GET(request) {
             metadataHeaders: ['From', 'Subject', 'Date'],
           });
           const headers = detailRes.data.payload.headers;
-          const messageData = {
+          return {
             id: msg.id,
             threadId: msg.threadId,
             subject: headers.find(h => h.name === 'Subject')?.value || '(no subject)',
@@ -172,8 +130,6 @@ export async function GET(request) {
             date: headers.find(h => h.name === 'Date')?.value || '',
             snippet: detailRes.data.snippet || '',
           };
-          metadataCache.set(msg.id, messageData);
-          return messageData;
         } catch (err) {
           console.error('Error fetching message details', err);
           return null;
@@ -183,10 +139,9 @@ export async function GET(request) {
 
     return NextResponse.json({
       messages: messages.filter(Boolean),
-      total: totalCount,
-      page,
+      nextPageToken,
       limit,
-      hasMore: pageToken !== null
+      hasMore: !!nextPageToken
     });
   } catch (error) {
     console.error('Fatal Gmail API error:', error);

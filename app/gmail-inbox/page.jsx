@@ -176,7 +176,7 @@ export default function GmailInbox() {
       if (sessErr) throw sessErr;
       if (!session) throw new Error("Please sign in to view your emails");
 
-      console.log('Fetching emails for type:', type, 'page:', page);
+      // Fetch emails for the current page and type
       const res = await fetch(`/api/gmail/inbox?type=${type}&page=${page}&limit=${emailsPerPage}`, {
         credentials: 'include',
         headers: {
@@ -185,22 +185,12 @@ export default function GmailInbox() {
         },
       });
 
-      console.log('Inbox response status:', res.status);
-
       if (!res.ok) {
         const errData = await res.json().catch(() => ({}));
-        console.error('Inbox API error:', errData);
-        console.error('Full error response:', {
-          status: res.status,
-          statusText: res.statusText,
-          headers: Object.fromEntries(res.headers.entries()),
-          errorData: errData
-        });
         throw new Error(errData.error || errData.details || `Failed to fetch emails (${res.status})`);
       }
 
       const data = await res.json();
-      console.log('Emails fetched:', data.messages?.length || 0);
       setEmails(data.messages || []);
       setFilteredEmails(data.messages || []);
       setTotalEmails(data.total || 0);
@@ -216,7 +206,6 @@ export default function GmailInbox() {
         setEmailBody("");
       }
     } catch (err) {
-      console.error('Error fetching emails:', err);
       setError(err.message);
     } finally {
       setLoading(false);
@@ -253,7 +242,6 @@ export default function GmailInbox() {
       if (sessErr) throw sessErr;
       if (!session) throw new Error("Please sign in");
 
-      console.log('Fetching email body for ID:', id);
       const res = await fetch(`/api/gmail/message?id=${id}`, {
         credentials: 'include',
         headers: {
@@ -262,26 +250,21 @@ export default function GmailInbox() {
         },
       });
 
-      console.log('Response status:', res.status);
       const text = await res.text();
-      console.log('Response text length:', text.length);
 
       let data;
       try {
         data = text ? JSON.parse(text) : {};
       } catch (parseErr) {
-        console.error('Invalid JSON:', text);
         throw new Error('Server returned invalid JSON');
       }
 
       if (!res.ok) {
-        console.error('API Error:', data);
         throw new Error(data.error || data.details || `Failed to load email content (${res.status})`);
       }
 
       setEmailBody(data.body || 'No content');
     } catch (err) {
-      console.error('Error fetching email body:', err);
       setEmailBody(`Error loading email content: ${err.message}`);
     } finally {
       setBodyLoading(false);
@@ -382,16 +365,7 @@ export default function GmailInbox() {
   const endIndex = startIndex + filteredEmails.length;
   const currentEmails = filteredEmails; // Server-side pagination, so all emails are current
 
-  // Debug pagination
-  console.log('Pagination Debug:', {
-    filteredEmailsLength: filteredEmails.length,
-    emailsPerPage,
-    totalPages,
-    currentPage,
-    startIndex,
-    endIndex,
-    currentEmailsLength: currentEmails.length
-  });
+  // Pagination debug removed for production cleanliness
 
   const goToPage = (page) => {
     setCurrentPage(page);
@@ -412,19 +386,19 @@ export default function GmailInbox() {
   };
 
   // AI Reply handlers
+  // TODO: Implement send functionality
   const onSend = () => {
-    console.log('Sending reply:', replyDraft);
-    // TODO: Implement send functionality
+    // Implement send functionality here
   };
 
+  // TODO: Implement edit functionality
   const onEdit = () => {
-    console.log('Editing reply');
-    // TODO: Implement edit functionality
+    // Implement edit functionality here
   };
 
+  // TODO: Implement reject functionality
   const onReject = () => {
-    console.log('Rejecting reply');
-    // TODO: Implement reject functionality
+    // Implement reject functionality here
   };
 
   if (loading) return <EmailListSkeleton />;
@@ -467,7 +441,7 @@ export default function GmailInbox() {
 
               alert(message);
             } catch (err) {
-              console.error('Test failed:', err);
+              // Test failed
             }
           }}
           className="px-4 py-2 bg-blue-600 text-white rounded hover:bg-blue-700"
@@ -480,7 +454,6 @@ export default function GmailInbox() {
             try {
               const res = await fetch('/api/test-supabase');
               const data = await res.json();
-              console.log('Supabase test:', data);
 
               let message = `Supabase Connection Test:\n\n`;
               message += `Status: ${data.status}\n`;
@@ -496,7 +469,7 @@ export default function GmailInbox() {
 
               alert(message);
             } catch (err) {
-              console.error('Supabase test failed:', err);
+              // Supabase test failed
             }
           }}
           className="px-4 py-2 bg-green-600 text-white rounded hover:bg-green-700"
